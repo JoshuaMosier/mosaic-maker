@@ -1,0 +1,6 @@
+/comparison
+*.npz
+*.pyc
+__pycache__/
+mosaic_*.jpg
+oklab.py
