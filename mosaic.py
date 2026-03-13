@@ -1,8 +1,8 @@
 """Build a photomosaic from a reference image using precomputed poster data.
 
 Divides the reference image into a grid of cells, matches each cell to
-the most visually similar poster using sRGB color vectors and a KD-tree,
-then assembles the matched posters into a high-resolution mosaic.
+the most visually similar poster using sRGB color vectors and Euclidean
+distance, then assembles the matched posters into a high-resolution mosaic.
 
 Usage:
     python mosaic.py --reference input.jpg --data grid_data.npz --images path/to/posters --cells 30
@@ -12,9 +12,9 @@ import argparse
 import os
 import sys
 
+import cv2
 import numpy as np
 from PIL import Image
-from scipy.spatial import KDTree
 from tqdm import tqdm
 
 GRID_COLS = 10
@@ -58,87 +58,94 @@ def image_to_vector(img: Image.Image) -> np.ndarray:
     return cell_avgs.reshape(-1).astype(np.float32)  # (450,)
 
 
-def build_mosaic(
-    reference: Image.Image,
-    tree: KDTree,
-    filenames: np.ndarray,
-    images_dir: str,
-    cells: int,
-    rows_override: int | None = None,
-) -> Image.Image:
-    """Build the mosaic image.
-
-    Args:
-        reference: Reference image (already cropped to 2:3).
-        tree: KDTree built from precomputed sRGB vectors.
-        filenames: Array of poster filenames matching tree indices.
-        images_dir: Path to poster image directory.
-        cells: Number of columns in the mosaic grid.
-        rows_override: Explicit row count, or None to auto-calculate for 2:3 tiles.
-
-    Returns:
-        Assembled mosaic as a PIL Image.
-    """
+def compute_all_cell_vectors(reference: Image.Image, cols: int, rows: int) -> np.ndarray:
+    """Precompute all cell vectors from the reference image."""
     ref_w, ref_h = reference.size
-    cols = cells
-    rows = rows_override if rows_override is not None else round(cells * 1.5)
-
     cell_w = ref_w / cols
     cell_h = ref_h / rows
 
-    used = set()
-    tile_assignments = []
+    vectors = np.empty((rows * cols, 450), dtype=np.float32)
 
-    print(f"Matching {cols}x{rows} = {cols * rows} cells...")
-    for row in tqdm(range(rows), desc="Matching rows"):
+    for row in tqdm(range(rows), desc="Computing cell vectors"):
         for col in range(cols):
             left = int(col * cell_w)
             top = int(row * cell_h)
             right = int((col + 1) * cell_w)
             bottom = int((row + 1) * cell_h)
             cell_img = reference.crop((left, top, right, bottom))
+            vectors[row * cols + col] = image_to_vector(cell_img)
 
-            query = image_to_vector(cell_img)
+    return vectors
 
-            # Find nearest unused poster
-            dists, indices = tree.query(query, k=min(len(filenames), 100))
-            chosen = None
-            for idx in indices:
-                if idx not in used:
-                    chosen = idx
-                    used.add(idx)
-                    break
 
-            if chosen is None:
-                _, all_indices = tree.query(query, k=len(filenames))
-                for idx in all_indices:
-                    if idx not in used:
-                        chosen = idx
-                        used.add(idx)
-                        break
+def build_mosaic(
+    reference: Image.Image,
+    vectors: np.ndarray,
+    filenames: np.ndarray,
+    images_dir: str,
+    cells: int,
+    rows_override: int | None = None,
+) -> Image.Image:
+    """Build the mosaic image."""
+    cols = cells
+    rows = rows_override if rows_override is not None else round(cells * 1.5)
 
-            if chosen is None:
-                chosen = indices[0]
+    n_cells = cols * rows
+    n_posters = len(filenames)
 
-            tile_assignments.append(filenames[chosen])
+    # Phase 1: Compute all cell vectors
+    print(f"Matching {cols}x{rows} = {n_cells} cells...")
+    cell_vectors = compute_all_cell_vectors(reference, cols, rows)
 
-    # Assemble the mosaic
+    # Phase 2: Compute squared Euclidean distances via BLAS matmul
+    # ||a - b||^2 = ||a||^2 + ||b||^2 - 2*a.b
+    print("Computing distances...")
+    q_sq = np.sum(cell_vectors ** 2, axis=1, keepdims=True)  # (n_cells, 1)
+    v_sq = np.sum(vectors ** 2, axis=1, keepdims=True).T     # (1, n_posters)
+    dot = cell_vectors @ vectors.T                            # (n_cells, n_posters)
+    dists = q_sq + v_sq - 2 * dot                            # (n_cells, n_posters)
+
+    # Sort all candidates by distance for each cell
+    print("Sorting candidates...")
+    all_sorted = np.argsort(dists, axis=1)  # (n_cells, n_posters)
+
+    # Phase 3: Sequential greedy assignment
+    used = set()
+    tile_assignments = []
+
+    print("Assigning tiles...")
+    for i in range(n_cells):
+        indices = all_sorted[i]
+        chosen = None
+        for idx in indices:
+            if idx not in used:
+                chosen = idx
+                used.add(idx)
+                break
+        if chosen is None:
+            chosen = indices[0]
+        tile_assignments.append(chosen)
+
+    # Phase 4: Assemble mosaic using cv2 for fast JPEG loading
     mosaic_w = cols * POSTER_W
     mosaic_h = rows * POSTER_H
-    mosaic = Image.new("RGB", (mosaic_w, mosaic_h))
+    mosaic_arr = np.zeros((mosaic_h, mosaic_w, 3), dtype=np.uint8)
 
     print(f"Assembling {mosaic_w}x{mosaic_h} mosaic...")
-    for i, fname in enumerate(tqdm(tile_assignments, desc="Placing tiles")):
+    for i, idx in enumerate(tqdm(tile_assignments, desc="Placing tiles")):
+        fname = filenames[idx]
+        path = os.path.join(images_dir, fname)
+        tile = cv2.imread(path, cv2.IMREAD_COLOR)
+        if tile is None:
+            continue
+        tile_rgb = tile[:, :, ::-1]  # BGR -> RGB
         row = i // cols
         col = i % cols
-        path = os.path.join(images_dir, fname)
-        try:
-            tile = Image.open(path).convert("RGB")
-        except Exception:
-            continue
-        mosaic.paste(tile, (col * POSTER_W, row * POSTER_H))
+        y = row * POSTER_H
+        x = col * POSTER_W
+        mosaic_arr[y:y + POSTER_H, x:x + POSTER_W] = tile_rgb
 
-    return mosaic
+    return Image.fromarray(mosaic_arr)
 
 
 def main():
@@ -162,17 +169,13 @@ def main():
     filenames = data["filenames"]
     print(f"Loaded {len(filenames)} poster vectors ({vectors.shape[1]}D)")
 
-    # Build KD-tree
-    print("Building KD-tree...")
-    tree = KDTree(vectors)
-
     # Load and crop reference image
     ref = Image.open(args.reference).convert("RGB")
     ref = crop_to_aspect(ref, 2, 3)
     print(f"Reference image: {ref.size[0]}x{ref.size[1]} (cropped to 2:3)")
 
     # Build mosaic
-    mosaic = build_mosaic(ref, tree, filenames, args.images, args.cells, args.rows)
+    mosaic = build_mosaic(ref, vectors, filenames, args.images, args.cells, args.rows)
 
     # Save
     mosaic.save(args.output, quality=95)

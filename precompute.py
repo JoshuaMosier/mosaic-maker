@@ -11,9 +11,10 @@ Usage:
 import argparse
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
+import cv2
 import numpy as np
-from PIL import Image
 from tqdm import tqdm
 
 GRID_COLS = 10
@@ -24,21 +25,21 @@ CELL_W = POSTER_W // GRID_COLS  # 23
 CELL_H = POSTER_H // GRID_ROWS  # 23
 
 
-def poster_to_vector(img: Image.Image) -> np.ndarray:
-    """Convert a 230x345 poster image to a 450D sRGB feature vector.
-
-    Returns:
-        1D array of shape (450,) with float32 sRGB values (0-255 range).
-    """
-    pixels = np.array(img, dtype=np.float32)  # (345, 230, 3)
-
-    # Reshape into grid of cells: (rows, cell_h, cols, cell_w, 3)
+def process_one(args_tuple):
+    """Load and compute vector for a single image. Returns (fname, vector) or None."""
+    images_dir, fname = args_tuple
+    path = os.path.join(images_dir, fname)
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    if w != POSTER_W or h != POSTER_H:
+        return None
+    # cv2 loads BGR; convert to RGB then compute vector
+    pixels = img[:, :, ::-1].astype(np.float32)  # (345, 230, 3) RGB
     grid = pixels.reshape(GRID_ROWS, CELL_H, GRID_COLS, CELL_W, 3)
-
-    # Average each cell in sRGB space: (15, 10, 3)
     cell_avgs = grid.mean(axis=(1, 3))
-
-    return cell_avgs.reshape(-1).astype(np.float32)  # (450,)
+    return fname, cell_avgs.reshape(-1).astype(np.float32)
 
 
 def main():
@@ -66,36 +67,34 @@ def main():
     )
     print(f"Found {len(files)} images in {args.images}")
 
-    vectors = []
-    filenames = []
-    skipped = 0
+    num_workers = min(os.cpu_count() or 4, 16)
+    work_items = [(args.images, f) for f in files]
 
-    for fname in tqdm(files, desc="Processing posters"):
-        path = os.path.join(args.images, fname)
-        try:
-            img = Image.open(path).convert("RGB")
-        except Exception:
-            skipped += 1
-            continue
+    results = {}
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        for result in tqdm(
+            executor.map(process_one, work_items),
+            total=len(files),
+            desc="Processing posters",
+        ):
+            if result is not None:
+                fname, vec = result
+                results[fname] = vec
 
-        w, h = img.size
-        if w != POSTER_W or h != POSTER_H:
-            skipped += 1
-            continue
-
-        vec = poster_to_vector(img)
-        vectors.append(vec)
-        filenames.append(fname)
-
-    if not vectors:
+    if not results:
         print("Error: no valid 230x345 images found.", file=sys.stderr)
         sys.exit(1)
+
+    # Sort by filename to maintain deterministic order
+    filenames = sorted(results.keys())
+    vectors = [results[f] for f in filenames]
 
     vectors_arr = np.stack(vectors)  # (N, 450) float32
     filenames_arr = np.array(filenames)
 
     np.savez_compressed(args.output, vectors=vectors_arr, filenames=filenames_arr)
     print(f"Saved {len(filenames)} poster vectors to {args.output}")
+    skipped = len(files) - len(filenames)
     if skipped:
         print(f"Skipped {skipped} files (wrong size or unreadable)")
 
