@@ -147,10 +147,13 @@ def build_mosaic(
             chosen = int(top_sorted[i, 0])
         tile_assignments.append(chosen)
 
-    # Phase 4: Assemble mosaic — load tiles in parallel, place into array
+    del dists, top_sorted  # free ~1GB before allocating the mosaic array
+
+    # Phase 4: Assemble mosaic — load tiles in parallel, place into BGR array
+    # Kept as BGR throughout to avoid channel-swapping 507MP of pixels.
     mosaic_w = cols * POSTER_W
     mosaic_h = rows * POSTER_H
-    mosaic_arr = np.zeros((mosaic_h, mosaic_w, 3), dtype=np.uint8)
+    mosaic_bgr = np.zeros((mosaic_h, mosaic_w, 3), dtype=np.uint8)
 
     def load_tile(args):
         i, idx = args
@@ -166,9 +169,9 @@ def build_mosaic(
                 continue
             row, col = divmod(i, cols)
             y, x = row * POSTER_H, col * POSTER_W
-            mosaic_arr[y:y + POSTER_H, x:x + POSTER_W] = tile[:, :, ::-1]
+            mosaic_bgr[y:y + POSTER_H, x:x + POSTER_W] = tile
 
-    return mosaic_arr
+    return mosaic_bgr
 
 
 def main():
@@ -197,12 +200,12 @@ def main():
     ref = crop_to_aspect(ref, 2, 3)
     print(f"Reference image: {ref.size[0]}x{ref.size[1]} (cropped to 2:3)")
 
-    # Build mosaic
-    mosaic_arr = build_mosaic(ref, vectors, filenames, args.images, args.cells, args.rows)
+    # Build mosaic (returns BGR array for direct cv2 save)
+    mosaic_bgr = build_mosaic(ref, vectors, filenames, args.images, args.cells, args.rows)
 
-    # Save — cv2 writes BGR, so convert from RGB
-    print(f"Saving {mosaic_arr.shape[1]}x{mosaic_arr.shape[0]} mosaic...")
-    cv2.imwrite(args.output, mosaic_arr[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, 95])
+    # Save
+    print(f"Saving {mosaic_bgr.shape[1]}x{mosaic_bgr.shape[0]} mosaic...")
+    cv2.imwrite(args.output, mosaic_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
     print(f"Saved mosaic to {args.output}")
 
 
