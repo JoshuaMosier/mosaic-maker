@@ -6,9 +6,11 @@ feature vector (150 cells x 3 channels) per poster.
 
 Usage:
     python precompute.py --images path/to/posters --output grid_data.npz
+    python precompute.py --images path/to/posters --metadata poster_metadata.json --min-ratings 3500
 """
 
 import argparse
+import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -54,6 +56,22 @@ def main():
         default="grid_data.npz",
         help="Output file path (default: grid_data.npz)",
     )
+    parser.add_argument(
+        "--metadata",
+        default=None,
+        help="Path to poster_metadata.json for filtering",
+    )
+    parser.add_argument(
+        "--min-ratings",
+        type=int,
+        default=0,
+        help="Minimum Letterboxd num_ratings to include a poster (requires --metadata)",
+    )
+    parser.add_argument(
+        "--genre",
+        default=None,
+        help="Only include posters matching this genre (case-insensitive, requires --metadata)",
+    )
     args = parser.parse_args()
 
     if not os.path.isdir(args.images):
@@ -66,6 +84,45 @@ def main():
         if f.lower().endswith((".jpg", ".jpeg"))
     )
     print(f"Found {len(files)} images in {args.images}")
+
+    # Apply metadata filters
+    if args.metadata and (args.min_ratings or args.genre):
+        with open(args.metadata, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        # Build lookup: slug -> metadata entry
+        meta_by_slug = {m["slug"]: m for m in metadata}
+
+        # Extract slug from filename: "{index}_{slug}.jpg"
+        def slug_from_fname(fname):
+            base = os.path.splitext(fname)[0]
+            parts = base.split("_", 1)
+            return parts[1] if len(parts) == 2 else base
+
+        before = len(files)
+        filtered = []
+        for f in files:
+            slug = slug_from_fname(f)
+            m = meta_by_slug.get(slug)
+            if m is None:
+                continue
+            if args.min_ratings:
+                nr = m.get("num_ratings", 0)
+                if not isinstance(nr, (int, float)) or nr < args.min_ratings:
+                    continue
+            if args.genre:
+                genres = m.get("genre", [])
+                if isinstance(genres, list):
+                    if not any(args.genre.lower() in g.lower() for g in genres):
+                        continue
+                elif isinstance(genres, str):
+                    if args.genre.lower() not in genres.lower():
+                        continue
+                else:
+                    continue
+            filtered.append(f)
+        files = filtered
+        print(f"Metadata filter: {before} -> {len(files)} images (min_ratings={args.min_ratings}, genre={args.genre})")
 
     num_workers = min(os.cpu_count() or 4, 16)
     work_items = [(args.images, f) for f in files]

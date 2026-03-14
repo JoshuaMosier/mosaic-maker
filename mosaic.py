@@ -105,23 +105,31 @@ def build_mosaic(
     cell_vectors = compute_all_cell_vectors(reference, cols, rows)
 
     # Phase 2: Compute squared Euclidean distances via BLAS matmul
-    # ||a - b||^2 = ||a||^2 + ||b||^2 - 2*a·b  (computed in-place to save memory)
-    print("Computing distances...")
-    dists = cell_vectors @ vectors.T          # (n_cells, n_posters)
-    dists *= -2
-    dists += np.sum(cell_vectors ** 2, axis=1, keepdims=True)
-    dists += np.sum(vectors ** 2, axis=1, keepdims=True).T
-
-    # Partial sort: only rank the top-k closest candidates per cell.
-    # With 31k posters and 6400 cells, top-1000 covers all assignments.
+    # ||a - b||^2 = ||a||^2 + ||b||^2 - 2*a·b
+    # Process in batches to avoid memory issues with large poster libraries
     top_k = min(n_posters, 1000)
-    print(f"Sorting top-{top_k} candidates...")
-    top_indices = np.argpartition(dists, top_k, axis=1)[:, :top_k]
-    # Sort just the top-k by distance
-    row_idx = np.arange(n_cells)[:, None]
-    top_dists = dists[row_idx, top_indices]
-    sort_order = np.argsort(top_dists, axis=1)
-    top_sorted = np.take_along_axis(top_indices, sort_order, axis=1)
+    batch_size = max(1, min(n_cells, int(2e9 / (n_posters * 4))))  # stay under ~2GB per batch
+    print(f"Computing distances and sorting top-{top_k} (batch_size={batch_size})...")
+
+    poster_norms = np.sum(vectors ** 2, axis=1).astype(np.float32)  # (n_posters,)
+    top_sorted = np.empty((n_cells, top_k), dtype=np.int32)
+
+    for start in range(0, n_cells, batch_size):
+        end = min(start + batch_size, n_cells)
+        batch = cell_vectors[start:end]  # (B, 450)
+        dists = batch @ vectors.T  # (B, n_posters) float32
+        dists *= -2
+        dists += np.sum(batch ** 2, axis=1, keepdims=True)
+        dists += poster_norms[None, :]
+
+        # Partial sort: top-k closest per cell
+        top_indices = np.argpartition(dists, top_k, axis=1)[:, :top_k]
+        row_idx = np.arange(end - start)[:, None]
+        top_dists = dists[row_idx, top_indices]
+        sort_order = np.argsort(top_dists, axis=1)
+        top_sorted[start:end] = np.take_along_axis(top_indices, sort_order, axis=1).astype(np.int32)
+
+    del dists  # free batch memory
 
     # Phase 3: Sequential greedy assignment
     used = set()
@@ -131,14 +139,15 @@ def build_mosaic(
     for i in range(n_cells):
         chosen = None
         for idx in top_sorted[i]:
-            if idx not in used:
+            if int(idx) not in used:
                 chosen = int(idx)
                 used.add(chosen)
                 break
 
-        # Fallback: if top-k exhausted, scan full row (rare)
+        # Fallback: recompute full row if top-k exhausted (rare)
         if chosen is None:
-            for idx in np.argsort(dists[i]):
+            row_dists = np.sum((cell_vectors[i] - vectors) ** 2, axis=1)
+            for idx in np.argsort(row_dists):
                 if int(idx) not in used:
                     chosen = int(idx)
                     used.add(chosen)
@@ -147,7 +156,7 @@ def build_mosaic(
             chosen = int(top_sorted[i, 0])
         tile_assignments.append(chosen)
 
-    del dists, top_sorted  # free ~1GB before allocating the mosaic array
+    del top_sorted  # free memory before allocating the mosaic array
 
     # Phase 4: Assemble mosaic — load tiles in parallel, place into BGR array
     # Kept as BGR throughout to avoid channel-swapping 507MP of pixels.
