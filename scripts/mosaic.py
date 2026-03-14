@@ -243,7 +243,9 @@ def main():
 
     # Save
     print(f"Saving {mosaic_bgr.shape[1]}x{mosaic_bgr.shape[0]} mosaic...")
-    cv2.imwrite(args.output, mosaic_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if not cv2.imwrite(args.output, mosaic_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95]):
+        print(f"ERROR: Failed to write {args.output} (file may be locked by another program)")
+        sys.exit(1)
 
     # Output summary
     ref_w, ref_h = ref.size
