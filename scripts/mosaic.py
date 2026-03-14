@@ -61,29 +61,22 @@ def image_to_vector(img: Image.Image, tile_w: int, tile_h: int) -> np.ndarray:
 
 def compute_all_cell_vectors(reference: Image.Image, cols: int, rows: int,
                              tile_w: int, tile_h: int) -> np.ndarray:
-    """Precompute all cell vectors from the reference image using threaded resizing."""
-    ref_w, ref_h = reference.size
-    cell_w = ref_w / cols
-    cell_h = ref_h / rows
+    """Compute all cell vectors by resizing reference to the exact grid dimensions.
 
-    vectors = np.empty((rows * cols, 450), dtype=np.float32)
+    Resizes the reference to (cols*GRID_COLS) x (rows*GRID_ROWS) so each pixel
+    maps directly to one sub-cell, then reshapes into per-cell 450D vectors.
+    """
+    target_w = cols * GRID_COLS   # cols * 10
+    target_h = rows * GRID_ROWS   # rows * 15
 
-    def process_cell(args):
-        row, col = args
-        left = int(col * cell_w)
-        top = int(row * cell_h)
-        right = int((col + 1) * cell_w)
-        bottom = int((row + 1) * cell_h)
-        cell_img = reference.crop((left, top, right, bottom))
-        return row * cols + col, image_to_vector(cell_img, tile_w, tile_h)
+    ref_small = reference.resize((target_w, target_h), Image.LANCZOS)
+    arr = np.array(ref_small, dtype=np.float32)  # (rows*15, cols*10, 3)
 
-    num_workers = min(os.cpu_count() or 4, 16)
-    work = [(r, c) for r in range(rows) for c in range(cols)]
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        for i, vec in tqdm(executor.map(process_cell, work), total=len(work), desc="Computing cell vectors"):
-            vectors[i] = vec
+    # Reshape into (rows, 15, cols, 10, 3), then transpose to (rows, cols, 15, 10, 3)
+    arr = arr.reshape(rows, GRID_ROWS, cols, GRID_COLS, 3)
+    arr = arr.transpose(0, 2, 1, 3, 4)
 
-    return vectors
+    return arr.reshape(rows * cols, GRID_ROWS * GRID_COLS * 3)
 
 
 def build_mosaic(
