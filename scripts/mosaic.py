@@ -96,7 +96,7 @@ def build_mosaic(
     tile_w: int = DEFAULT_TILE_W,
     tile_h: int = DEFAULT_TILE_H,
 ) -> np.ndarray:
-    """Build the mosaic image. Returns a BGR numpy array."""
+    """Build the mosaic image. Returns (BGR numpy array, unique tile count)."""
     cols = cells
     rows = rows_override if rows_override is not None else round(cells * (tile_h / tile_w))
 
@@ -183,7 +183,7 @@ def build_mosaic(
             y, x = row * tile_h, col * tile_w
             mosaic_bgr[y:y + tile_h, x:x + tile_w] = tile
 
-    return mosaic_bgr
+    return mosaic_bgr, len(used)
 
 
 def main():
@@ -203,6 +203,7 @@ def main():
         help="Override tile dimensions as WxH (default: read from npz, or 230x345)",
     )
     parser.add_argument("--output", default="output/mosaic.jpg", help="Output file path (default: output/mosaic.jpg)")
+    parser.add_argument("--output-scale", type=float, default=1.0, help="Scale factor for final mosaic (default: 1.0)")
     args = parser.parse_args()
 
     # Load precomputed data
@@ -227,12 +228,28 @@ def main():
     print(f"Reference image: {ref.size[0]}x{ref.size[1]} (cropped to {tile_w}:{tile_h})")
 
     # Build mosaic (returns BGR array for direct cv2 save)
-    mosaic_bgr = build_mosaic(ref, vectors, filenames, args.images, args.cells, args.rows, tile_w, tile_h)
+    mosaic_bgr, unique_tiles = build_mosaic(ref, vectors, filenames, args.images, args.cells, args.rows, tile_w, tile_h)
+
+    # Scale if requested
+    if args.output_scale != 1.0:
+        new_w = int(mosaic_bgr.shape[1] * args.output_scale)
+        new_h = int(mosaic_bgr.shape[0] * args.output_scale)
+        print(f"Scaling mosaic to {new_w}x{new_h} (scale={args.output_scale})...")
+        mosaic_bgr = cv2.resize(mosaic_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
     # Save
     print(f"Saving {mosaic_bgr.shape[1]}x{mosaic_bgr.shape[0]} mosaic...")
     cv2.imwrite(args.output, mosaic_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
-    print(f"Saved mosaic to {args.output}")
+
+    # Output summary
+    rows_used = args.rows if args.rows is not None else round(args.cells * (tile_h / tile_w))
+    file_size_mb = os.path.getsize(args.output) / (1024 * 1024)
+    print(f"\nMosaic summary:")
+    print(f"  Grid:         {args.cells}x{rows_used} grid")
+    print(f"  Unique tiles: {unique_tiles}")
+    print(f"  Output:       {mosaic_bgr.shape[1]}x{mosaic_bgr.shape[0]} px")
+    print(f"  File size:    {file_size_mb:.1f} MB")
+    print(f"  Saved to:     {args.output}")
 
 
 if __name__ == "__main__":

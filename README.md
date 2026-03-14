@@ -1,4 +1,4 @@
-# Mosaic Posters
+# Mosaic Maker
 
 Generate photomosaics from any library of images. Given a reference image, the tool finds the best-matching tile for each cell in a grid, producing a high-resolution mosaic.
 
@@ -62,6 +62,7 @@ python scripts/mosaic.py --reference photo.jpg --images path/to/tiles --cells 80
 | `--rows` | auto (from tile aspect ratio) | Number of rows |
 | `--tile-size` | *(from npz)* | Override tile dimensions as WxH |
 | `--output` | `output/mosaic.jpg` | Output file path |
+| `--output-scale` | `1.0` | Scale factor for the final image (e.g., 0.5 for half size) |
 
 ## Using your own images
 
@@ -105,3 +106,7 @@ pip install -r requirements.txt
 ```
 
 Requires Python 3.10+.
+
+## License
+
+[MIT](LICENSE)

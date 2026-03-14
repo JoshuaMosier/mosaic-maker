@@ -1,7 +1,4 @@
 numpy
-Pillow
 opencv-python
+Pillow
 tqdm
-requests
-beautifulsoup4
-imagehash
