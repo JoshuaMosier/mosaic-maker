@@ -19,10 +19,20 @@ Generate photomosaics from any library of images. Given a reference image, the t
 pip install -r requirements.txt
 
 # 1. Precompute color vectors for your tile images (only needed once)
-python precompute.py --images path/to/tiles
+python scripts/precompute.py --images path/to/tiles
 
 # 2. Build a mosaic
-python mosaic.py --reference photo.jpg --images path/to/tiles --cells 50
+python scripts/mosaic.py --reference photo.jpg --images path/to/tiles --cells 50
+```
+
+## Project structure
+
+```
+scripts/          Python scripts (mosaic, precompute, data tools)
+images/           Tile images (flat directory of JPEGs)
+data/             Precomputed vectors (.npz), metadata JSON
+output/           Generated mosaics and animations
+docs/             README images
 ```
 
 ## How it works
@@ -32,13 +42,13 @@ python mosaic.py --reference photo.jpg --images path/to/tiles --cells 50
 Each tile image is divided into a 10x15 grid of cells. The average sRGB color of each cell produces a 450-dimensional feature vector (150 cells x 3 channels). This runs once per tile set.
 
 ```
-python precompute.py --images path/to/tiles --output grid_data.npz
+python scripts/precompute.py --images path/to/tiles
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--images` | `$MOSAIC_IMAGES_DIR` or `images/` | Directory of tile images |
-| `--output` | `grid_data.npz` | Output file path |
+| `--output` | `data/grid_data.npz` | Output file path |
 | `--tile-size` | `230x345` | Expected tile dimensions as WxH |
 | `--metadata` | *(none)* | JSON metadata file for filtering |
 | `--min-ratings` | `0` | Minimum rating count filter (requires `--metadata`) |
@@ -49,18 +59,18 @@ python precompute.py --images path/to/tiles --output grid_data.npz
 The reference image is center-cropped to match the tile aspect ratio and divided into a grid. Each cell is matched to the nearest unused tile by Euclidean distance in color-vector space.
 
 ```
-python mosaic.py --reference photo.jpg --data grid_data.npz --images path/to/tiles --cells 80
+python scripts/mosaic.py --reference photo.jpg --images path/to/tiles --cells 80
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--reference` | *(required)* | Path to the reference image |
-| `--data` | `grid_data.npz` | Precomputed vectors from step 1 |
+| `--data` | `data/grid_data.npz` | Precomputed vectors from step 1 |
 | `--images` | `$MOSAIC_IMAGES_DIR` or `images/` | Directory of tile images |
 | `--cells` | `30` | Number of columns in the mosaic grid |
 | `--rows` | auto (from tile aspect ratio) | Number of rows |
 | `--tile-size` | *(from npz)* | Override tile dimensions as WxH |
-| `--output` | `mosaic.jpg` | Output file path |
+| `--output` | `output/mosaic.jpg` | Output file path |
 
 ## Using your own images
 
@@ -73,10 +83,10 @@ The mosaic works with any set of uniformly-sized images, not just movie posters.
 3. **Run the pipeline:**
    ```bash
    # For square 300x300 album art:
-   python precompute.py --images my_album_art/ --tile-size 300x300
+   python scripts/precompute.py --images my_album_art/ --tile-size 300x300
 
    # Build mosaic (aspect ratio is inferred from tile size)
-   python mosaic.py --reference photo.jpg --images my_album_art/ --cells 40
+   python scripts/mosaic.py --reference photo.jpg --images my_album_art/ --cells 40
    ```
 
 The number of unique tiles limits your grid size — an 80x80 grid needs 6,400 images. If your library is smaller, use fewer `--cells`.
@@ -85,9 +95,9 @@ The number of unique tiles limits your grid size — an 80x80 grid needs 6,400 i
 
 | Script | Purpose |
 |--------|---------|
-| `fetch_new_posters.py` | Download poster images from Letterboxd or TMDB |
-| `build_metadata.py` | Build/backfill a metadata JSON from Letterboxd |
-| `deduplicate_posters.py` | Find and filter duplicate images by perceptual hash |
+| `scripts/fetch_new_posters.py` | Download poster images from Letterboxd or TMDB |
+| `scripts/build_metadata.py` | Build/backfill a metadata JSON from Letterboxd |
+| `scripts/deduplicate_posters.py` | Find and filter duplicate images by perceptual hash |
 
 ## Performance
 

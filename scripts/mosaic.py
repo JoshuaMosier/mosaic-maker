@@ -5,7 +5,7 @@ the most visually similar tile using sRGB color vectors and Euclidean
 distance, then assembles the matched tiles into a high-resolution mosaic.
 
 Usage:
-    python mosaic.py --reference input.jpg --data grid_data.npz --images path/to/tiles --cells 30
+    python scripts/mosaic.py --reference input.jpg --images path/to/tiles --cells 30
 """
 
 import argparse
@@ -189,7 +189,7 @@ def build_mosaic(
 def main():
     parser = argparse.ArgumentParser(description="Build a photomosaic from a reference image.")
     parser.add_argument("--reference", required=True, help="Path to the reference image")
-    parser.add_argument("--data", default="grid_data.npz", help="Precomputed grid data (default: grid_data.npz)")
+    parser.add_argument("--data", default="data/grid_data.npz", help="Precomputed grid data (default: data/grid_data.npz)")
     parser.add_argument(
         "--images",
         default=os.environ.get("MOSAIC_IMAGES_DIR", "images"),
@@ -202,7 +202,7 @@ def main():
         default=None,
         help="Override tile dimensions as WxH (default: read from npz, or 230x345)",
     )
-    parser.add_argument("--output", default="mosaic.jpg", help="Output file path (default: mosaic.jpg)")
+    parser.add_argument("--output", default="output/mosaic.jpg", help="Output file path (default: output/mosaic.jpg)")
     args = parser.parse_args()
 
     # Load precomputed data

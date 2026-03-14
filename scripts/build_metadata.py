@@ -4,9 +4,9 @@ Merges existing metadata sources (bulk_movie_metadata.json, new_metadata.json)
 and optionally backfills missing entries from Letterboxd film pages.
 
 Usage:
-    python build_metadata.py                    # Merge existing only
-    python build_metadata.py --backfill         # Also fetch missing from Letterboxd
-    python build_metadata.py --backfill --limit 1000  # Backfill up to 1000
+    python scripts/build_metadata.py                    # Merge existing only
+    python scripts/build_metadata.py --backfill         # Also fetch missing from Letterboxd
+    python scripts/build_metadata.py --backfill --limit 1000  # Backfill up to 1000
 """
 
 import argparse
@@ -23,8 +23,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 
-IMAGES_DIR = os.path.join(os.path.dirname(__file__), "images")
-OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "poster_metadata.json")
+IMAGES_DIR = "images"
+OUTPUT_PATH = "data/poster_metadata.json"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 JSON_LD_RE = re.compile(
@@ -119,7 +119,7 @@ def main():
     metadata = {}  # slug -> dict
 
     # Old bulk metadata
-    old_path = os.path.join(os.path.dirname(__file__), "bulk_movie_metadata.json")
+    old_path = "data/bulk_movie_metadata.json"
     if os.path.isfile(old_path):
         with open(old_path, "r", encoding="utf-8") as f:
             old_data = json.load(f)
@@ -143,7 +143,7 @@ def main():
         print(f"  From bulk_movie_metadata.json: {len(metadata)}")
 
     # New metadata
-    new_path = os.path.join(os.path.dirname(__file__), "new_metadata.json")
+    new_path = "data/new_metadata.json"
     if os.path.isfile(new_path):
         with open(new_path, "r", encoding="utf-8") as f:
             new_data = json.load(f)

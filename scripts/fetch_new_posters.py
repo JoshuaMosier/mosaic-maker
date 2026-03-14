@@ -4,12 +4,12 @@ Sources films from full_data.json (cross-referenced lists), Letterboxd list
 URLs, or TMDB discover API (by year). Skips posters already downloaded.
 
 Usage:
-    python fetch_new_posters.py [--source lists|url|tmdb] [options]
+    python scripts/fetch_new_posters.py [--source lists|url|tmdb] [options]
 
 Examples:
-    python fetch_new_posters.py --source lists --min-lists 2
-    python fetch_new_posters.py --source url --url https://letterboxd.com/user/list/my-list/
-    python fetch_new_posters.py --source tmdb --year 2024 2025 --tmdb-key YOUR_KEY
+    python scripts/fetch_new_posters.py --source lists --min-lists 2
+    python scripts/fetch_new_posters.py --source url --url https://letterboxd.com/user/list/my-list/
+    python scripts/fetch_new_posters.py --source tmdb --year 2024 2025 --tmdb-key YOUR_KEY
 """
 
 import argparse
@@ -30,8 +30,8 @@ from PIL import Image
 from tqdm import tqdm
 
 SINGLE_LIST_URL = "https://letterboxd.com/sprudelheinz/list/all-the-movies-sorted-by-movie-posters-1/"
-FULL_DATA_PATH = os.path.join(os.path.dirname(__file__), "full_data.json")
-IMAGES_DIR = os.path.join(os.path.dirname(__file__), "images")
+FULL_DATA_PATH = "data/full_data.json"
+IMAGES_DIR = "images"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 POSTER_W, POSTER_H = 230, 345
 TMDB_IMG_BASE = "https://image.tmdb.org/t/p/w500"
@@ -451,7 +451,7 @@ def main():
 
     # Step 3: Fetch poster URLs, metadata, and download
     print(f"\nFetching poster URLs and downloading ({args.workers} workers)...")
-    metadata_path = os.path.join(os.path.dirname(__file__), "new_metadata.json")
+    metadata_path = "data/new_metadata.json"
 
     def fetch_and_download(film):
         slug = film["slug"]

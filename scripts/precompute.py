@@ -5,9 +5,9 @@ RGB color of each cell is stored as a 450-dimensional feature vector
 (150 cells x 3 channels) per image.
 
 Usage:
-    python precompute.py --images path/to/tiles --output grid_data.npz
-    python precompute.py --images path/to/tiles --tile-size 300x300
-    python precompute.py --images path/to/tiles --metadata poster_metadata.json --min-ratings 3500
+    python scripts/precompute.py --images path/to/tiles
+    python scripts/precompute.py --images path/to/tiles --tile-size 300x300
+    python scripts/precompute.py --images path/to/tiles --metadata data/poster_metadata.json --min-ratings 3500
 """
 
 import argparse
@@ -56,8 +56,8 @@ def main():
     )
     parser.add_argument(
         "--output",
-        default="grid_data.npz",
-        help="Output file path (default: grid_data.npz)",
+        default="data/grid_data.npz",
+        help="Output file path (default: data/grid_data.npz)",
     )
     parser.add_argument(
         "--tile-size",
