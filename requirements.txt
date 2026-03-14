@@ -2,3 +2,6 @@ numpy
 Pillow
 opencv-python
 tqdm
+requests
+beautifulsoup4
+imagehash

@@ -1,6 +1,10 @@
 /comparison
+/images/
 *.npz
 *.pyc
 __pycache__/
 mosaic_*.jpg
+mosaic_*.mp4
 oklab.py
+poster_metadata.json
+deduplicated_files.json
