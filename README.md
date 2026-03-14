@@ -1,6 +1,6 @@
 # Mosaic Posters
 
-Generate photomosaics from a library of movie poster images. Given a reference image, the tool finds the best-matching poster for each cell in a grid, producing a high-resolution mosaic.
+Generate photomosaics from any library of images. Given a reference image, the tool finds the best-matching tile for each cell in a grid, producing a high-resolution mosaic.
 
 <p align="center">
   <img src="docs/reference.jpg" width="200" alt="Reference image">
@@ -13,52 +13,95 @@ Generate photomosaics from a library of movie poster images. Given a reference i
   <em>Reference &rarr; 100x100 mosaic (10,000 unique posters) &rarr; zoomed detail</em>
 </p>
 
+## Quick start
+
+```bash
+pip install -r requirements.txt
+
+# 1. Precompute color vectors for your tile images (only needed once)
+python precompute.py --images path/to/tiles
+
+# 2. Build a mosaic
+python mosaic.py --reference photo.jpg --images path/to/tiles --cells 50
+```
+
 ## How it works
 
-The pipeline has two steps:
+### 1. Precompute tile vectors
 
-### 1. Precompute poster vectors
-
-Each 230x345 poster is divided into a 10x15 grid of 23x23px cells. The average sRGB color of each cell is stored as a 450-dimensional feature vector (150 cells x 3 channels). This only needs to run once for a given set of posters.
+Each tile image is divided into a 10x15 grid of cells. The average sRGB color of each cell produces a 450-dimensional feature vector (150 cells x 3 channels). This runs once per tile set.
 
 ```
-python precompute.py --images path/to/posters --output grid_data.npz
+python precompute.py --images path/to/tiles --output grid_data.npz
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--images` | `$MOSAIC_IMAGES_DIR` or `images/` | Directory of tile images |
+| `--output` | `grid_data.npz` | Output file path |
+| `--tile-size` | `230x345` | Expected tile dimensions as WxH |
+| `--metadata` | *(none)* | JSON metadata file for filtering |
+| `--min-ratings` | `0` | Minimum rating count filter (requires `--metadata`) |
+| `--genre` | *(none)* | Genre filter (requires `--metadata`) |
 
 ### 2. Build a mosaic
 
-The reference image is center-cropped to 2:3 aspect ratio and divided into a grid. Each cell is resized to 230x345 with Lanczos interpolation, converted to the same 450D vector, and matched to the nearest unused poster by Euclidean distance.
+The reference image is center-cropped to match the tile aspect ratio and divided into a grid. Each cell is matched to the nearest unused tile by Euclidean distance in color-vector space.
 
 ```
-python mosaic.py --reference photo.jpg --data grid_data.npz --images path/to/posters --cells 80 --output mosaic.jpg
+python mosaic.py --reference photo.jpg --data grid_data.npz --images path/to/tiles --cells 80
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--reference` | *(required)* | Path to the reference image |
 | `--data` | `grid_data.npz` | Precomputed vectors from step 1 |
-| `--images` | `$MOSAIC_IMAGES_DIR` or `images/` | Directory of 230x345 poster JPEGs |
+| `--images` | `$MOSAIC_IMAGES_DIR` or `images/` | Directory of tile images |
 | `--cells` | `30` | Number of columns in the mosaic grid |
-| `--rows` | auto (1.5x cells) | Number of rows (override for non-2:3 tiles) |
+| `--rows` | auto (from tile aspect ratio) | Number of rows |
+| `--tile-size` | *(from npz)* | Override tile dimensions as WxH |
 | `--output` | `mosaic.jpg` | Output file path |
 
-## Poster images
+## Using your own images
 
-The poster library should be a flat directory of 230x345 JPEG files. Images that don't match this exact size are skipped during precomputation. With ~31k posters, grids up to ~170x170 can use a unique poster per cell.
+The mosaic works with any set of uniformly-sized images, not just movie posters. To use your own:
+
+1. **Prepare your tiles.** All images must be the same dimensions. The width must be divisible by 10 and the height by 15 (e.g., 230x345, 300x300, 200x300). Resize or crop your images to a uniform size before importing.
+
+2. **Place them in a flat directory.** All images should be JPEGs in a single folder — no subdirectories.
+
+3. **Run the pipeline:**
+   ```bash
+   # For square 300x300 album art:
+   python precompute.py --images my_album_art/ --tile-size 300x300
+
+   # Build mosaic (aspect ratio is inferred from tile size)
+   python mosaic.py --reference photo.jpg --images my_album_art/ --cells 40
+   ```
+
+The number of unique tiles limits your grid size — an 80x80 grid needs 6,400 images. If your library is smaller, use fewer `--cells`.
+
+## Additional tools
+
+| Script | Purpose |
+|--------|---------|
+| `fetch_new_posters.py` | Download poster images from Letterboxd or TMDB |
+| `build_metadata.py` | Build/backfill a metadata JSON from Letterboxd |
+| `deduplicate_posters.py` | Find and filter duplicate images by perceptual hash |
 
 ## Performance
 
-Benchmarked with 31,764 posters on a 16-core machine:
+Benchmarked on a 16-core machine:
 
-| Step | Time |
-|------|------|
-| Precompute vectors | ~17s |
-| Build 80x80 mosaic (6,400 tiles) | ~18s |
-| Build 100x100 mosaic (10,000 tiles) | ~28s |
+| Step | 31K tiles | 120K tiles |
+|------|-----------|------------|
+| Precompute vectors | ~17s | ~65s |
+| Build 80x80 mosaic | ~18s | ~25s |
 
 Key optimizations:
 - **Threaded I/O** for JPEG loading via OpenCV (releases the GIL)
 - **BLAS matrix multiplication** for distance computation instead of KD-tree (faster in 450D)
+- **Batched distance matrix** to avoid OOM with large tile libraries
 - **Partial sort** (`argpartition`) to rank only the top-1000 candidates per cell
 - **BGR passthrough** in assembly to avoid color-swapping the full mosaic array
 

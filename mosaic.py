@@ -1,11 +1,11 @@
-"""Build a photomosaic from a reference image using precomputed poster data.
+"""Build a photomosaic from a reference image using precomputed tile data.
 
 Divides the reference image into a grid of cells, matches each cell to
-the most visually similar poster using sRGB color vectors and Euclidean
-distance, then assembles the matched posters into a high-resolution mosaic.
+the most visually similar tile using sRGB color vectors and Euclidean
+distance, then assembles the matched tiles into a high-resolution mosaic.
 
 Usage:
-    python mosaic.py --reference input.jpg --data grid_data.npz --images path/to/posters --cells 30
+    python mosaic.py --reference input.jpg --data grid_data.npz --images path/to/tiles --cells 30
 """
 
 import argparse
@@ -20,8 +20,8 @@ from tqdm import tqdm
 
 GRID_COLS = 10
 GRID_ROWS = 15
-POSTER_W = 230
-POSTER_H = 345
+DEFAULT_TILE_W = 230
+DEFAULT_TILE_H = 345
 
 
 def crop_to_aspect(img: Image.Image, aspect_w: int, aspect_h: int) -> Image.Image:
@@ -42,16 +42,16 @@ def crop_to_aspect(img: Image.Image, aspect_w: int, aspect_h: int) -> Image.Imag
     return img
 
 
-def image_to_vector(img: Image.Image) -> np.ndarray:
+def image_to_vector(img: Image.Image, tile_w: int, tile_h: int) -> np.ndarray:
     """Convert an image (any size) to a 450D sRGB vector.
 
-    Resizes to 230x345, divides into 10x15 grid, averages each cell.
+    Resizes to tile_w x tile_h, divides into 10x15 grid, averages each cell.
     """
-    resized = img.resize((POSTER_W, POSTER_H), Image.LANCZOS)
-    pixels = np.array(resized, dtype=np.float32)  # (345, 230, 3)
+    resized = img.resize((tile_w, tile_h), Image.LANCZOS)
+    pixels = np.array(resized, dtype=np.float32)
 
-    cell_h = POSTER_H // GRID_ROWS  # 23
-    cell_w = POSTER_W // GRID_COLS  # 23
+    cell_h = tile_h // GRID_ROWS
+    cell_w = tile_w // GRID_COLS
 
     grid = pixels.reshape(GRID_ROWS, cell_h, GRID_COLS, cell_w, 3)
     cell_avgs = grid.mean(axis=(1, 3))  # (15, 10, 3)
@@ -59,7 +59,8 @@ def image_to_vector(img: Image.Image) -> np.ndarray:
     return cell_avgs.reshape(-1).astype(np.float32)  # (450,)
 
 
-def compute_all_cell_vectors(reference: Image.Image, cols: int, rows: int) -> np.ndarray:
+def compute_all_cell_vectors(reference: Image.Image, cols: int, rows: int,
+                             tile_w: int, tile_h: int) -> np.ndarray:
     """Precompute all cell vectors from the reference image using threaded resizing."""
     ref_w, ref_h = reference.size
     cell_w = ref_w / cols
@@ -74,7 +75,7 @@ def compute_all_cell_vectors(reference: Image.Image, cols: int, rows: int) -> np
         right = int((col + 1) * cell_w)
         bottom = int((row + 1) * cell_h)
         cell_img = reference.crop((left, top, right, bottom))
-        return row * cols + col, image_to_vector(cell_img)
+        return row * cols + col, image_to_vector(cell_img, tile_w, tile_h)
 
     num_workers = min(os.cpu_count() or 4, 16)
     work = [(r, c) for r in range(rows) for c in range(cols)]
@@ -92,17 +93,19 @@ def build_mosaic(
     images_dir: str,
     cells: int,
     rows_override: int | None = None,
-) -> Image.Image:
-    """Build the mosaic image."""
+    tile_w: int = DEFAULT_TILE_W,
+    tile_h: int = DEFAULT_TILE_H,
+) -> np.ndarray:
+    """Build the mosaic image. Returns a BGR numpy array."""
     cols = cells
-    rows = rows_override if rows_override is not None else round(cells * 1.5)
+    rows = rows_override if rows_override is not None else round(cells * (tile_h / tile_w))
 
     n_cells = cols * rows
     n_posters = len(filenames)
 
     # Phase 1: Compute all cell vectors
     print(f"Matching {cols}x{rows} = {n_cells} cells...")
-    cell_vectors = compute_all_cell_vectors(reference, cols, rows)
+    cell_vectors = compute_all_cell_vectors(reference, cols, rows, tile_w, tile_h)
 
     # Phase 2: Compute squared Euclidean distances via BLAS matmul
     # ||a - b||^2 = ||a||^2 + ||b||^2 - 2*a·b
@@ -159,9 +162,9 @@ def build_mosaic(
     del top_sorted  # free memory before allocating the mosaic array
 
     # Phase 4: Assemble mosaic — load tiles in parallel, place into BGR array
-    # Kept as BGR throughout to avoid channel-swapping 507MP of pixels.
-    mosaic_w = cols * POSTER_W
-    mosaic_h = rows * POSTER_H
+    # Kept as BGR throughout to avoid channel-swapping the full mosaic.
+    mosaic_w = cols * tile_w
+    mosaic_h = rows * tile_h
     mosaic_bgr = np.zeros((mosaic_h, mosaic_w, 3), dtype=np.uint8)
 
     def load_tile(args):
@@ -177,8 +180,8 @@ def build_mosaic(
             if tile is None:
                 continue
             row, col = divmod(i, cols)
-            y, x = row * POSTER_H, col * POSTER_W
-            mosaic_bgr[y:y + POSTER_H, x:x + POSTER_W] = tile
+            y, x = row * tile_h, col * tile_w
+            mosaic_bgr[y:y + tile_h, x:x + tile_w] = tile
 
     return mosaic_bgr
 
@@ -193,7 +196,12 @@ def main():
         help="Directory containing poster images",
     )
     parser.add_argument("--cells", type=int, default=30, help="Number of columns in the mosaic grid")
-    parser.add_argument("--rows", type=int, default=None, help="Number of rows (default: auto-calculated for 2:3 tiles)")
+    parser.add_argument("--rows", type=int, default=None, help="Number of rows (default: auto from tile aspect ratio)")
+    parser.add_argument(
+        "--tile-size",
+        default=None,
+        help="Override tile dimensions as WxH (default: read from npz, or 230x345)",
+    )
     parser.add_argument("--output", default="mosaic.jpg", help="Output file path (default: mosaic.jpg)")
     args = parser.parse_args()
 
@@ -202,15 +210,24 @@ def main():
     data = np.load(args.data, allow_pickle=True)
     vectors = data["vectors"]
     filenames = data["filenames"]
-    print(f"Loaded {len(filenames)} poster vectors ({vectors.shape[1]}D)")
 
-    # Load and crop reference image
+    # Determine tile dimensions: CLI override > npz stored > default
+    if args.tile_size:
+        tile_w, tile_h = (int(x) for x in args.tile_size.lower().split("x"))
+    elif "tile_size" in data:
+        tile_w, tile_h = int(data["tile_size"][0]), int(data["tile_size"][1])
+    else:
+        tile_w, tile_h = DEFAULT_TILE_W, DEFAULT_TILE_H
+
+    print(f"Loaded {len(filenames)} tile vectors ({vectors.shape[1]}D, {tile_w}x{tile_h} tiles)")
+
+    # Load and crop reference image to match tile aspect ratio
     ref = Image.open(args.reference).convert("RGB")
-    ref = crop_to_aspect(ref, 2, 3)
-    print(f"Reference image: {ref.size[0]}x{ref.size[1]} (cropped to 2:3)")
+    ref = crop_to_aspect(ref, tile_w, tile_h)
+    print(f"Reference image: {ref.size[0]}x{ref.size[1]} (cropped to {tile_w}:{tile_h})")
 
     # Build mosaic (returns BGR array for direct cv2 save)
-    mosaic_bgr = build_mosaic(ref, vectors, filenames, args.images, args.cells, args.rows)
+    mosaic_bgr = build_mosaic(ref, vectors, filenames, args.images, args.cells, args.rows, tile_w, tile_h)
 
     # Save
     print(f"Saving {mosaic_bgr.shape[1]}x{mosaic_bgr.shape[0]} mosaic...")

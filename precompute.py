@@ -1,12 +1,13 @@
-"""Precompute sRGB grid color vectors for all poster images.
+"""Precompute sRGB grid color vectors for all tile images.
 
-Each 230x345 poster is divided into a 10x15 grid (23x23px cells).
-The average RGB color of each cell is stored as a 450-dimensional
-feature vector (150 cells x 3 channels) per poster.
+Each image is divided into a 10x15 grid of equal cells. The average
+RGB color of each cell is stored as a 450-dimensional feature vector
+(150 cells x 3 channels) per image.
 
 Usage:
-    python precompute.py --images path/to/posters --output grid_data.npz
-    python precompute.py --images path/to/posters --metadata poster_metadata.json --min-ratings 3500
+    python precompute.py --images path/to/tiles --output grid_data.npz
+    python precompute.py --images path/to/tiles --tile-size 300x300
+    python precompute.py --images path/to/tiles --metadata poster_metadata.json --min-ratings 3500
 """
 
 import argparse
@@ -21,10 +22,10 @@ from tqdm import tqdm
 
 GRID_COLS = 10
 GRID_ROWS = 15
-POSTER_W = 230
-POSTER_H = 345
-CELL_W = POSTER_W // GRID_COLS  # 23
-CELL_H = POSTER_H // GRID_ROWS  # 23
+
+# Module-level tile dimensions (set from CLI args before workers start)
+_TILE_W = 230
+_TILE_H = 345
 
 
 def process_one(args_tuple):
@@ -35,11 +36,13 @@ def process_one(args_tuple):
     if img is None:
         return None
     h, w = img.shape[:2]
-    if w != POSTER_W or h != POSTER_H:
+    if w != _TILE_W or h != _TILE_H:
         return None
+    cell_w = _TILE_W // GRID_COLS
+    cell_h = _TILE_H // GRID_ROWS
     # cv2 loads BGR; convert to RGB then compute vector
-    pixels = img[:, :, ::-1].astype(np.float32)  # (345, 230, 3) RGB
-    grid = pixels.reshape(GRID_ROWS, CELL_H, GRID_COLS, CELL_W, 3)
+    pixels = img[:, :, ::-1].astype(np.float32)
+    grid = pixels.reshape(GRID_ROWS, cell_h, GRID_COLS, cell_w, 3)
     cell_avgs = grid.mean(axis=(1, 3))
     return fname, cell_avgs.reshape(-1).astype(np.float32)
 
@@ -49,12 +52,17 @@ def main():
     parser.add_argument(
         "--images",
         default=os.environ.get("MOSAIC_IMAGES_DIR", "images"),
-        help="Directory containing 230x345 poster JPEGs (default: $MOSAIC_IMAGES_DIR or 'images/')",
+        help="Directory containing tile images (default: $MOSAIC_IMAGES_DIR or 'images/')",
     )
     parser.add_argument(
         "--output",
         default="grid_data.npz",
         help="Output file path (default: grid_data.npz)",
+    )
+    parser.add_argument(
+        "--tile-size",
+        default="230x345",
+        help="Tile dimensions as WxH (default: 230x345). Width must be divisible by 10, height by 15.",
     )
     parser.add_argument(
         "--metadata",
@@ -73,6 +81,17 @@ def main():
         help="Only include posters matching this genre (case-insensitive, requires --metadata)",
     )
     args = parser.parse_args()
+
+    # Parse and validate tile size
+    global _TILE_W, _TILE_H
+    try:
+        _TILE_W, _TILE_H = (int(x) for x in args.tile_size.lower().split("x"))
+    except ValueError:
+        print(f"Error: invalid --tile-size '{args.tile_size}', expected WxH (e.g. 230x345)", file=sys.stderr)
+        sys.exit(1)
+    if _TILE_W % GRID_COLS != 0 or _TILE_H % GRID_ROWS != 0:
+        print(f"Error: tile width must be divisible by {GRID_COLS} and height by {GRID_ROWS}", file=sys.stderr)
+        sys.exit(1)
 
     if not os.path.isdir(args.images):
         print(f"Error: image directory not found: {args.images}", file=sys.stderr)
@@ -139,7 +158,7 @@ def main():
                 results[fname] = vec
 
     if not results:
-        print("Error: no valid 230x345 images found.", file=sys.stderr)
+        print(f"Error: no valid {_TILE_W}x{_TILE_H} images found.", file=sys.stderr)
         sys.exit(1)
 
     # Sort by filename to maintain deterministic order
@@ -149,8 +168,13 @@ def main():
     vectors_arr = np.stack(vectors)  # (N, 450) float32
     filenames_arr = np.array(filenames)
 
-    np.savez_compressed(args.output, vectors=vectors_arr, filenames=filenames_arr)
-    print(f"Saved {len(filenames)} poster vectors to {args.output}")
+    np.savez_compressed(
+        args.output,
+        vectors=vectors_arr,
+        filenames=filenames_arr,
+        tile_size=np.array([_TILE_W, _TILE_H]),
+    )
+    print(f"Saved {len(filenames)} vectors ({_TILE_W}x{_TILE_H} tiles) to {args.output}")
     skipped = len(files) - len(filenames)
     if skipped:
         print(f"Skipped {skipped} files (wrong size or unreadable)")
