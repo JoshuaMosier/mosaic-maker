@@ -46,9 +46,6 @@ python scripts/precompute.py --images path/to/tiles
 | `--images` | `$MOSAIC_IMAGES_DIR` or `images/` | Directory of tile images |
 | `--output` | `data/grid_data.npz` | Output file path |
 | `--tile-size` | `230x345` | Expected tile dimensions as WxH |
-| `--metadata` | *(none)* | JSON metadata file for filtering |
-| `--min-ratings` | `0` | Minimum rating count filter (requires `--metadata`) |
-| `--genre` | *(none)* | Genre filter (requires `--metadata`) |
 
 ### 2. Build a mosaic
 
@@ -84,14 +81,6 @@ The mosaic works with any set of uniformly-sized images (JPEG or PNG), not just 
    ```
 
 The number of unique tiles limits your grid size — an 80x80 grid needs 6,400 images. If your library is smaller, use fewer `--cells`.
-
-## Additional tools
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/fetch_new_posters.py` | Download poster images from Letterboxd or TMDB |
-| `scripts/build_metadata.py` | Build/backfill a metadata JSON from Letterboxd |
-| `scripts/deduplicate_posters.py` | Find and filter duplicate images by perceptual hash |
 
 ## Performance
 

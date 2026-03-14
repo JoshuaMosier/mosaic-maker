@@ -5,3 +5,6 @@
 *.pyc
 __pycache__/
 CLAUDE.md
+scripts/fetch_new_posters.py
+scripts/build_metadata.py
+scripts/deduplicate_posters.py
